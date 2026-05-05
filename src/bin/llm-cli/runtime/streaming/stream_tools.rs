@@ -82,11 +82,25 @@ impl ToolStreamState {
                 self.handle_tool_complete(tool_call, ctx).await;
                 Ok(true)
             }
+            StreamChunk::Thinking(delta) => {
+                let _ = self.handle_thinking(delta, ctx).await;
+                Ok(true)
+            }
             StreamChunk::Done { .. } => Ok(false),
         }
     }
 
     async fn handle_text(
+        &mut self,
+        delta: String,
+        ctx: &StreamContext<'_>,
+    ) -> Result<(), LLMError> {
+        self.buffer.push_str(&delta);
+        flush_text_if_needed(self.buffer.len(), &mut self.buffer, ctx.request, ctx.sender).await;
+        Ok(())
+    }
+
+    async fn handle_thinking(
         &mut self,
         delta: String,
         ctx: &StreamContext<'_>,

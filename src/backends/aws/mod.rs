@@ -1429,6 +1429,7 @@ impl ChatProvider for BedrockBackend {
                     choices: vec![StreamChoice {
                         delta: StreamDelta {
                             content: Some(text),
+                            reasoning_content: None,
                             tool_calls: None,
                         },
                     }],
@@ -1439,6 +1440,7 @@ impl ChatProvider for BedrockBackend {
                         choices: vec![StreamChoice {
                             delta: StreamDelta {
                                 content: None,
+                                reasoning_content: None,
                                 tool_calls: Some(vec![tool_call]),
                             },
                         }],

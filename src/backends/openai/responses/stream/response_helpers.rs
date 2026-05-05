@@ -23,6 +23,7 @@ pub(super) fn stream_response_text(delta: String) -> StreamResponse {
         choices: vec![StreamChoice {
             delta: StreamDelta {
                 content: Some(delta),
+                reasoning_content: None,
                 tool_calls: None,
             },
         }],
@@ -35,6 +36,7 @@ pub(super) fn stream_response_tool_call(tool_call: ToolCall) -> StreamResponse {
         choices: vec![StreamChoice {
             delta: StreamDelta {
                 content: None,
+                reasoning_content: None,
                 tool_calls: Some(vec![tool_call]),
             },
         }],
@@ -47,6 +49,7 @@ pub(super) fn stream_response_usage(usage: Usage) -> StreamResponse {
         choices: vec![StreamChoice {
             delta: StreamDelta {
                 content: None,
+                reasoning_content: None,
                 tool_calls: None,
             },
         }],

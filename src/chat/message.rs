@@ -86,6 +86,8 @@ pub struct ChatMessage {
     pub message_type: MessageType,
     /// The text content of the message
     pub content: String,
+    /// Reasoning/thinking content (for OpenAI-compatible providers)
+    pub reasoning_content: Option<String>,
 }
 
 impl ChatMessage {
@@ -119,6 +121,7 @@ pub struct ChatMessageBuilder {
     role: ChatRole,
     message_type: MessageType,
     content: String,
+    reasoning_content: Option<String>,
 }
 
 impl ChatMessageBuilder {
@@ -128,12 +131,19 @@ impl ChatMessageBuilder {
             role,
             message_type: MessageType::default(),
             content: String::new(),
+            reasoning_content: None,
         }
     }
 
     /// Set the message content
     pub fn content(mut self, content: impl Into<String>) -> Self {
         self.content = content.into();
+        self
+    }
+
+    /// Set the reasoning/thinking content (for OpenAI-compatible providers)
+    pub fn reasoning_content(mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning_content = Some(reasoning.into());
         self
     }
 
@@ -179,6 +189,7 @@ impl ChatMessageBuilder {
             role: self.role,
             message_type: self.message_type,
             content: self.content,
+            reasoning_content: self.reasoning_content,
         }
     }
 }

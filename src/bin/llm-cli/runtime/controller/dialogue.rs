@@ -450,6 +450,7 @@ impl AppController {
                     role,
                     message_type: llm::chat::MessageType::Text,
                     content,
+                    reasoning_content: None,
                 });
             }
         }

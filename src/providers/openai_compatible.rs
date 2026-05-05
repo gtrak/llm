@@ -111,13 +111,15 @@ pub trait OpenAIProviderConfig: Send + Sync {
 
 /// Generic OpenAI-compatible chat message
 #[derive(Serialize, Debug)]
-pub struct OpenAIChatMessage<'a> {
+   pub struct OpenAIChatMessage<'a> {
     pub role: &'a str,
     #[serde(
         skip_serializing_if = "Option::is_none",
         with = "either::serde_untagged_optional"
     )]
     pub content: Option<Either<Vec<OpenAIMessageContent<'a>>, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,6 +191,8 @@ pub struct OpenAIChatChoice {
 pub struct OpenAIChatMsg {
     pub role: String,
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
@@ -230,6 +234,8 @@ pub struct OpenAIStreamChoice {
 #[derive(Deserialize, Debug)]
 pub struct OpenAIStreamDelta {
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<StreamToolCall>>,
 }
@@ -294,6 +300,12 @@ impl ChatResponse for OpenAIChatResponse {
         self.choices
             .first()
             .and_then(|c| c.message.tool_calls.clone())
+    }
+
+    fn thinking(&self) -> Option<String> {
+        self.choices
+            .first()
+            .and_then(|c| c.message.reasoning_content.clone())
     }
 
     fn usage(&self) -> Option<Usage> {
@@ -531,6 +543,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
                             role: "tool",
                             tool_call_id: Some(result.id.clone()),
                             tool_calls: None,
+                            reasoning_content: None,
                             content: Some(Right(result.function.arguments.clone())),
                         })
                         .collect::<Vec<_>>()
@@ -552,6 +565,7 @@ impl<T: OpenAIProviderConfig> OpenAICompatibleProvider<T> {
                         tool_call_id: None,
                         tool_output: None,
                     }])),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                 },
@@ -1001,6 +1015,13 @@ fn parse_openai_sse_chunk_with_tools(
                         }
                     }
 
+                    // Handle reasoning/thinking content
+                    if let Some(reasoning) = &choice.delta.reasoning_content {
+                        if !reasoning.is_empty() {
+                            results.push(ChatStreamChunk::Thinking(reasoning.clone()));
+                        }
+                    }
+
                     // Handle tool calls
                     if let Some(tool_calls) = &choice.delta.tool_calls {
                         for tc in tool_calls {
@@ -1087,6 +1108,7 @@ struct OpenAIToolStreamChoice {
 #[derive(Debug, Deserialize)]
 struct OpenAIToolStreamDelta {
     content: Option<String>,
+    reasoning_content: Option<String>,
     tool_calls: Option<Vec<OpenAIToolStreamToolCall>>,
 }
 
@@ -1127,6 +1149,7 @@ pub fn chat_message_to_openai_message(chat_msg: ChatMessage) -> OpenAIChatMessag
             MessageType::ToolUse(_) => None,
             MessageType::ToolResult(_) => None,
         },
+        reasoning_content: chat_msg.reasoning_content.clone(),
         tool_calls: match &chat_msg.message_type {
             MessageType::ToolUse(calls) => {
                 let owned_calls: Vec<ToolCall> = calls
@@ -1186,6 +1209,7 @@ pub fn create_sse_stream(
                     choices: vec![StreamChoice {
                         delta: StreamDelta {
                             content: None,
+                            reasoning_content: None,
                             tool_calls: Some(vec![self.tool_buffer.clone()]),
                         },
                     }],
@@ -1214,6 +1238,7 @@ pub fn create_sse_stream(
                                 choices: vec![StreamChoice {
                                     delta: StreamDelta {
                                         content: None,
+                                        reasoning_content: None,
                                         tool_calls: None,
                                     },
                                 }],
@@ -1236,6 +1261,7 @@ pub fn create_sse_stream(
                 }
                 for choice in &response.choices {
                     let content = choice.delta.content.clone();
+                    let reasoning_content = choice.delta.reasoning_content.clone();
                     // Map StreamToolCall (some fields are optional) to ToolCall
                     let tool_calls: Option<Vec<ToolCall>> =
                         choice.delta.tool_calls.clone().map(|calls| {
@@ -1251,7 +1277,7 @@ pub fn create_sse_stream(
                                 })
                                 .collect::<Vec<ToolCall>>()
                         });
-                    if content.is_some() || tool_calls.is_some() {
+                    if content.is_some() || reasoning_content.is_some() || tool_calls.is_some() {
                         if self.normalize_response && tool_calls.is_some() {
                             // If normalize_response is enabled, accumulate tool call outputs
                             if let Some(calls) = &tool_calls {
@@ -1281,6 +1307,7 @@ pub fn create_sse_stream(
                                 choices: vec![StreamChoice {
                                     delta: StreamDelta {
                                         content,
+                                        reasoning_content,
                                         tool_calls,
                                     },
                                 }],
@@ -1607,5 +1634,36 @@ mod tests {
             "Expected ToolUseComplete, got {:?}",
             results[0]
         );
+    }
+
+    #[test]
+    fn test_parse_openai_stream_reasoning_content() {
+        let event = r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":"Let me think about this"},"finish_reason":null}]}"#;
+        let mut tool_states = HashMap::new();
+        let results = parse_openai_sse_chunk_with_tools(event, &mut tool_states).unwrap();
+
+        assert_eq!(results.len(), 1);
+        match &results[0] {
+            ChatStreamChunk::Thinking(text) => assert_eq!(text, "Let me think about this"),
+            _ => panic!("Expected Thinking chunk, got {:?}", results[0]),
+        }
+    }
+
+    #[test]
+    fn test_parse_openai_stream_reasoning_ignores_empty() {
+        let event = r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":""},"finish_reason":null}]}"#;
+        let mut tool_states = HashMap::new();
+        let results = parse_openai_sse_chunk_with_tools(event, &mut tool_states).unwrap();
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_chat_response_thinking() {
+        let json = r#"{"choices":[{"message":{"role":"assistant","content":"The answer is 42","reasoning_content":"Let me calculate...","tool_calls":null}}],"usage":null}"#;
+        let response: OpenAIChatResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.text(), Some("The answer is 42".to_string()));
+        assert_eq!(response.thinking(), Some("Let me calculate...".to_string()));
     }
 }

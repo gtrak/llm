@@ -1240,6 +1240,7 @@ fn parse_google_sse_chunk(chunk: &str) -> Result<Option<crate::chat::StreamRespo
                             choices: vec![crate::chat::StreamChoice {
                                 delta: crate::chat::StreamDelta {
                                     content,
+                                    reasoning_content: None,
                                     tool_calls: None,
                                 },
                             }],
